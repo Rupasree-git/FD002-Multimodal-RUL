@@ -7,3 +7,9 @@ dist/
 build/
 .env
 .DS_Store
+.venv/
+venv/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+outputs/

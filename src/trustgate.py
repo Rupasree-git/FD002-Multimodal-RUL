@@ -18,12 +18,21 @@ from sklearn.preprocessing import StandardScaler
 # =========================================================
 # TEMPORAL RELIABILITY
 # =========================================================
-def compute_temporal_reliability(df, sensor_list, window=20):
+def compute_temporal_reliability(
+    df,
+    sensor_list,
+    window=20,
+    reliability_bounds=None,
+):
     """
-    Computes simple temporal reliability using per-engine rolling std.
+    Computes temporal reliability using per-engine rolling std.
     Higher stability -> higher reliability in [0, 1].
+    If `reliability_bounds` is provided ({sensor: {"min": float, "max": float}}),
+    uses those saved bounds instead of computing min/max on the current slice.
+    Returns `(reliability_df, reliability_bounds)`.
     """
     reliability = pd.DataFrame(index=df.index)
+    computed_bounds = {}
 
     for sensor in sensor_list:
         roll_std = (
@@ -31,15 +40,24 @@ def compute_temporal_reliability(df, sensor_list, window=20):
             .transform(lambda x: x.rolling(window=window, min_periods=1).std().fillna(0))
         )
 
-        std_min, std_max = roll_std.min(), roll_std.max()
+        if reliability_bounds and sensor in reliability_bounds:
+            std_min = float(reliability_bounds[sensor]["min"])
+            std_max = float(reliability_bounds[sensor]["max"])
+        else:
+            std_min = float(roll_std.min())
+            std_max = float(roll_std.max())
+
+        computed_bounds[sensor] = {"min": std_min, "max": std_max}
+
         if std_max - std_min > 1e-8:
             rel = 1.0 - (roll_std - std_min) / (std_max - std_min)
+            rel = rel.clip(lower=0.0, upper=1.0)
         else:
             rel = pd.Series(1.0, index=roll_std.index)
 
         reliability[f"{sensor}_reliability"] = rel
 
-    return reliability
+    return reliability, computed_bounds
 
 
 # =========================================================
@@ -112,13 +130,16 @@ def train_trustgate(
     - fused validation MAE and predictions
     - trust weights DataFrame
     - context features DataFrame
+    - reliability_bounds dict
+    - modality_order list
     """
     torch.manual_seed(seed)
     np.random.seed(seed)
 
     val_df = train_df[val_mask].copy()
+    modality_order = list(MODALITIES.keys())
 
-    reliability = compute_temporal_reliability(val_df, useful_sensors)
+    reliability, reliability_bounds = compute_temporal_reliability(val_df, useful_sensors)
     context_df = prepare_context_features(val_df, reliability)
 
     scaler = StandardScaler()
@@ -131,10 +152,10 @@ def train_trustgate(
 
     modality_tensors = {
         i: torch.tensor(np.asarray(val_predictions[m], dtype=np.float32), dtype=torch.float32)
-        for i, m in enumerate(MODALITIES)
+        for i, m in enumerate(modality_order)
     }
 
-    tgn = TrustGateNetwork(X_context.shape[1], n_modalities=len(MODALITIES))
+    tgn = TrustGateNetwork(X_context.shape[1], n_modalities=len(modality_order))
     optimizer = optim.Adam(tgn.parameters(), lr=lr)
     criterion = nn.L1Loss()
 
@@ -145,7 +166,7 @@ def train_trustgate(
         weights = tgn(X_context)
         fused_pred = torch.zeros_like(y_true)
 
-        for i in range(len(MODALITIES)):
+        for i in range(len(modality_order)):
             fused_pred = fused_pred + weights[:, i] * modality_tensors[i]
 
         loss = criterion(fused_pred, y_true)
@@ -159,7 +180,7 @@ def train_trustgate(
     with torch.no_grad():
         final_weights = tgn(X_context)
         y_pred = torch.zeros_like(y_true)
-        for i in range(len(MODALITIES)):
+        for i in range(len(modality_order)):
             y_pred = y_pred + final_weights[:, i] * modality_tensors[i]
 
     y_pred_np = y_pred.numpy()
@@ -167,7 +188,7 @@ def train_trustgate(
 
     weight_df = pd.DataFrame(
         final_weights.numpy(),
-        columns=[f"{m}_weight" for m in MODALITIES],
+        columns=[f"{m}_weight" for m in modality_order],
         index=val_df.index,
     )
 
@@ -178,4 +199,6 @@ def train_trustgate(
         "y_pred": y_pred_np,
         "weights": weight_df,
         "context": context_df,
+        "reliability_bounds": reliability_bounds,
+        "modality_order": modality_order,
     }
