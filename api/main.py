@@ -1,10 +1,13 @@
 # api/main.py
+import gc
+import json
 import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
+import torch
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -13,6 +16,8 @@ from src.data_loader import load_fd002_data
 from src.feature_engineering import add_temporal_features, define_modalities
 from src.inference import load_artifacts, predict_trajectories
 from src.preprocessing import compute_rul_full
+
+torch.set_num_threads(1)
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 MODELS_DIR = ROOT_DIR / "models"
@@ -46,6 +51,7 @@ def get_cached_artifacts() -> Dict[str, Any]:
     global _ARTIFACTS
     if _ARTIFACTS is None:
         _ARTIFACTS = load_artifacts(models_dir=MODELS_DIR, device="cpu")
+        gc.collect()
     return _ARTIFACTS
 
 
@@ -59,6 +65,7 @@ def get_cached_datasets() -> Dict[str, pd.DataFrame]:
             "test": test_df,
             "rul_reference": rul_df,
         }
+        gc.collect()
     return _DATASETS
 
 
@@ -70,11 +77,10 @@ class InferenceRequest(BaseModel):
 
 @app.get("/api/health")
 def health() -> Dict[str, Any]:
-    artifacts_ready = (MODELS_DIR / "pipeline_metadata.json").exists()
+    meta_path = MODELS_DIR / "pipeline_metadata.json"
+    artifacts_ready = meta_path.exists()
     data_ready = (DATA_DIR / "train_FD002.txt").exists() and (DATA_DIR / "test_FD002.txt").exists()
-    meta = {}
-    if artifacts_ready:
-        meta = get_cached_artifacts()["metadata"]
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if artifacts_ready else {}
     return {
         "status": "ready" if (artifacts_ready and data_ready) else "degraded",
         "artifacts_ready": artifacts_ready,
