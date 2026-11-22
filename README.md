@@ -25,3 +25,7 @@ An end-to-end Remaining Useful Life (RUL) prediction, adaptive fusion, and uncer
 git clone https://github.com/Rupasree-git/FD002-Multimodal-RUL
 cd FD002-Multimodal-RUL
 pip install -r requirements.txt
+
+## Live Demo & Deployment
+- **Frontend (Next.js on Vercel):** https://fd-002-multimodal-rul.vercel.app
+- **Backend API (FastAPI on Render):** https://fd002-multimodal-rul.onrender.com
