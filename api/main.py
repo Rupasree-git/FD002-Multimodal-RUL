@@ -1,6 +1,7 @@
 # api/main.py
+import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -19,9 +20,19 @@ DATA_DIR = ROOT_DIR / "data"
 
 app = FastAPI(title="C-MAPSS FD002 Prognostics API", version="1.0.0")
 
+allowed_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://fd-002-multimodal-rul.vercel.app",
+]
+extra_origin = os.getenv("FRONTEND_URL")
+if extra_origin:
+    allowed_origins.append(extra_origin.rstrip("/"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
